@@ -23,7 +23,8 @@ class GamepadView(
     private val preferences: SharedPreferences,
     private val onReport: (ByteArray) -> Unit,
     private val onConnect: () -> Unit,
-    private val onSettings: () -> Unit
+    private val onSettings: () -> Unit,
+    private val onMapping: () -> Unit
 ) : View(context) {
 
     var statusText: String = "Tekan HUBUNGKAN untuk menyiapkan Bluetooth HID."
