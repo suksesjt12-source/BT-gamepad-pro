@@ -33,7 +33,8 @@ class MainActivity : Activity() {
             preferences = layoutPreferences,
             onReport = { report -> hidController?.sendReport(report) },
             onConnect = { connectAndPair() },
-            onSettings = { showSettings() }
+            onSettings = { showSettings() },
+            onMapping = { showMappingDialog() }
         )
         setContentView(
             gamepadView,
@@ -189,6 +190,27 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun showMappingDialog() {
+        val profileIds = arrayOf("standard", "nintendo", "swap_ab", "swap_xy")
+        val profileNames = arrayOf(
+            "Android / Xbox — standar",
+            "Nintendo — tukar A/B dan X/Y",
+            "Tukar A/B",
+            "Tukar X/Y"
+        )
+        val selected = profileIds.indexOf(gamepadView.currentMappingProfile()).coerceAtLeast(0)
+
+        AlertDialog.Builder(this)
+            .setTitle("AUTO MAPPING")
+            .setSingleChoiceItems(profileNames, selected) { dialog, which ->
+                gamepadView.applyAutoMapping(profileIds[which])
+                updateStatus("Pemetaan aktif: ${profileNames[which]}")
+                dialog.dismiss()
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
     private fun showSettings() {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -216,15 +238,12 @@ class MainActivity : Activity() {
             max = 110
             progress = ((gamepadView.selectedControlScale() * 100).toInt() - 50).coerceIn(0, 110)
         }
-        val modeLabel = TextView(this).apply {
-            text = if (gamepadView.isAutoInputEnabled()) {
-                "Auto Input: AKTIF — sentuhan dikirim otomatis sebagai input gamepad."
-            } else {
-                "Auto Input: JEDA — input tidak dikirim ke HP penerima."
-            }
+        val mappingLabel = TextView(this).apply {
+            text = "Pemetaan tombol aktif: ${gamepadView.mappingProfileName()}. Gunakan AUTO MAP untuk mengganti profil."
+            setPadding(0, 10, 0, 4)
         }
         val hint = TextView(this).apply {
-            text = "Untuk mengubah posisi: tutup menu ini, tekan EDIT, lalu geser tombol ke posisi yang diinginkan. Tekan DONE untuk menyimpan."
+            text = "Untuk mengubah posisi: tutup menu ini, tekan EDIT, lalu geser tombol ke posisi yang diinginkan. Tekan DONE untuk menyimpan. AUTO MAP mengatur pemetaan tombol gamepad."
             setPadding(0, 12, 0, 8)
         }
 
@@ -248,7 +267,7 @@ class MainActivity : Activity() {
         layout.addView(sensitivityBar)
         layout.addView(selectedLabel)
         layout.addView(selectedSizeBar)
-        layout.addView(modeLabel)
+        layout.addView(mappingLabel)
         layout.addView(hint)
 
         AlertDialog.Builder(this)
