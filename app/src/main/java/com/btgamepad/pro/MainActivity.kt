@@ -27,8 +27,10 @@ class MainActivity : Activity() {
         window.navigationBarColor = 0xFF10131A.toInt()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        val layoutPreferences = getSharedPreferences("controller_layout", MODE_PRIVATE)
         gamepadView = GamepadView(
             this,
+            preferences = layoutPreferences,
             onReport = { report -> hidController?.sendReport(report) },
             onConnect = { connectAndPair() },
             onSettings = { showSettings() }
@@ -89,12 +91,12 @@ class MainActivity : Activity() {
             onReady = {
                 runOnUiThread {
                     updateStatus(
-                        "HID AKTIF. Pair HP ini dari HP penerima. Setelah paired, tekan HUBUNGKAN lagi."
+                        "HID AKTIF. Pair HP penerima lewat Bluetooth, lalu tekan PAIR lagi."
                     )
                 }
             }
         )
-        updateStatus("Siap. Tekan HUBUNGKAN untuk memulai pairing.")
+        updateStatus("Siap. Tekan PAIR untuk memulai koneksi Bluetooth.")
     }
 
     private fun connectAndPair() {
@@ -119,16 +121,12 @@ class MainActivity : Activity() {
         }
 
         if (controller.isRegistered()) {
-            showPairedHosts(controller, adapter)
+            showPairedHosts(controller)
         } else {
             requestDiscoverableBeforeRegistering()
         }
     }
 
-    /**
-     * Discoverability prompt is shown BEFORE HID registration. Android may
-     * automatically unregister a HID app while it is not foreground.
-     */
     private fun requestDiscoverableBeforeRegistering() {
         try {
             val intent = Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
@@ -140,18 +138,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showPairedHosts(controller: BluetoothHidController, adapter: BluetoothAdapter) {
-        val devices = controller.pairedDevices().filter { device ->
-            try {
-                device.address != adapter.address
-            } catch (_: SecurityException) {
-                true
-            }
-        }
-
+    private fun showPairedHosts(controller: BluetoothHidController) {
+        val devices = controller.pairedDevices()
         if (devices.isEmpty()) {
             updateStatus(
-                "HID aktif. Belum ada HP yang paired. Dari HP penerima, buka Bluetooth lalu pair dengan nama Bluetooth HP controller ini. Kembali ke sini dan tekan HUBUNGKAN."
+                "HID aktif. Pair HP ini dari menu Bluetooth HP penerima, lalu tekan PAIR lagi."
             )
             return
         }
@@ -189,10 +180,10 @@ class MainActivity : Activity() {
             }
             REQUEST_DISCOVERABLE -> {
                 if (resultCode > 0) {
-                    updateStatus("Mode terlihat aktif. Mendaftarkan HID saat aplikasi kembali aktif…")
+                    updateStatus("Mendaftarkan HID. Tunggu status HID AKTIF…")
                     hidController?.start()
                 } else {
-                    updateStatus("Permintaan mode discoverable dibatalkan. Tekan HUBUNGKAN untuk mencoba lagi.")
+                    updateStatus("Permintaan discoverable dibatalkan. Tekan PAIR untuk mencoba lagi.")
                 }
             }
         }
@@ -205,54 +196,83 @@ class MainActivity : Activity() {
         }
 
         val deadzoneLabel = TextView(this).apply {
-            text = "Deadzone: ${(gamepadView.deadzone * 100).toInt()}%"
+            text = "Deadzone analog: ${(gamepadView.deadzone * 100).toInt()}%"
         }
         val deadzoneBar = SeekBar(this).apply {
             max = 30
             progress = (gamepadView.deadzone * 100).toInt()
         }
         val sensitivityLabel = TextView(this).apply {
-            text = "Sensitivitas: ${(gamepadView.sensitivity * 100).toInt()}%"
+            text = "Sensitivitas analog: ${(gamepadView.sensitivity * 100).toInt()}%"
         }
         val sensitivityBar = SeekBar(this).apply {
             max = 200
             progress = (gamepadView.sensitivity * 100).toInt()
         }
-        val sizeLabel = TextView(this).apply {
-            text = "Ukuran analog: ${(gamepadView.stickScale * 100).toInt()}%"
+        val selectedLabel = TextView(this).apply {
+            text = "Ukuran ${gamepadView.selectedControlName()}: ${(gamepadView.selectedControlScale() * 100).toInt()}%"
         }
-        val sizeBar = SeekBar(this).apply {
-            max = 150
-            progress = (gamepadView.stickScale * 100).toInt()
+        val selectedSizeBar = SeekBar(this).apply {
+            max = 110
+            progress = ((gamepadView.selectedControlScale() * 100).toInt() - 50).coerceIn(0, 110)
+        }
+        val modeLabel = TextView(this).apply {
+            text = if (gamepadView.isAutoInputEnabled()) {
+                "Auto Input: AKTIF — sentuhan dikirim otomatis sebagai input gamepad."
+            } else {
+                "Auto Input: JEDA — input tidak dikirim ke HP penerima."
+            }
+        }
+        val hint = TextView(this).apply {
+            text = "Untuk mengubah posisi: tutup menu ini, tekan EDIT, lalu geser tombol ke posisi yang diinginkan. Tekan DONE untuk menyimpan."
+            setPadding(0, 12, 0, 8)
         }
 
         deadzoneBar.setOnSeekBarChangeListener(simpleListener { value ->
             gamepadView.deadzone = value / 100f
-            deadzoneLabel.text = "Deadzone: $value%"
+            deadzoneLabel.text = "Deadzone analog: $value%"
         })
         sensitivityBar.setOnSeekBarChangeListener(simpleListener { value ->
             gamepadView.sensitivity = value / 100f
-            sensitivityLabel.text = "Sensitivitas: $value%"
+            sensitivityLabel.text = "Sensitivitas analog: $value%"
         })
-        sizeBar.setOnSeekBarChangeListener(simpleListener { value ->
-            val adjusted = value.coerceAtLeast(50)
-            gamepadView.stickScale = adjusted / 100f
-            sizeLabel.text = "Ukuran analog: $adjusted%"
-            gamepadView.invalidate()
+        selectedSizeBar.setOnSeekBarChangeListener(simpleListener { value ->
+            val scale = (value + 50) / 100f
+            gamepadView.setSelectedControlScale(scale)
+            selectedLabel.text = "Ukuran ${gamepadView.selectedControlName()}: ${(scale * 100).toInt()}%"
         })
 
         layout.addView(deadzoneLabel)
         layout.addView(deadzoneBar)
         layout.addView(sensitivityLabel)
         layout.addView(sensitivityBar)
-        layout.addView(sizeLabel)
-        layout.addView(sizeBar)
+        layout.addView(selectedLabel)
+        layout.addView(selectedSizeBar)
+        layout.addView(modeLabel)
+        layout.addView(hint)
 
         AlertDialog.Builder(this)
-            .setTitle("Pengaturan Controller")
+            .setTitle("Pengaturan & Edit Layout")
             .setView(layout)
+            .setNeutralButton("Reset Layout", null)
             .setPositiveButton("Selesai", null)
-            .show()
+            .create()
+            .apply {
+                setOnShowListener {
+                    getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Reset layout?")
+                            .setMessage("Semua posisi dan ukuran tombol akan dikembalikan ke tata letak awal.")
+                            .setNegativeButton("Batal", null)
+                            .setPositiveButton("Reset") { _, _ ->
+                                gamepadView.resetLayout()
+                                updateStatus("Layout controller dikembalikan ke pengaturan awal.")
+                            }
+                            .show()
+                    }
+                }
+                show()
+            }
     }
 
     private fun simpleListener(onValue: (Int) -> Unit) =
