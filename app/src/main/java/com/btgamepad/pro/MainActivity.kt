@@ -4,11 +4,13 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.WindowManager
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.SeekBar
@@ -22,16 +24,21 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = 0xFF10131A.toInt()
         window.navigationBarColor = 0xFF10131A.toInt()
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         gamepadView = GamepadView(
             this,
             onReport = { report -> hidController?.sendReport(report) },
             onConnect = { connectAndPair() },
             onSettings = { showSettings() }
         )
-        setContentView(gamepadView, ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ))
+        setContentView(
+            gamepadView,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
         requestBluetoothPermissions()
     }
 
@@ -41,7 +48,9 @@ class MainActivity : Activity() {
                 Manifest.permission.BLUETOOTH_CONNECT,
                 Manifest.permission.BLUETOOTH_ADVERTISE
             )
-            val missing = required.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            val missing = required.filter {
+                checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+            }
             if (missing.isNotEmpty()) {
                 requestPermissions(missing.toTypedArray(), REQUEST_BLUETOOTH_PERMISSIONS)
                 return
@@ -50,55 +59,141 @@ class MainActivity : Activity() {
         initializeHid()
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_BLUETOOTH_PERMISSIONS) {
-            if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+            if (grantResults.isNotEmpty() && grantResults.all {
+                    it == PackageManager.PERMISSION_GRANTED
+                }) {
                 initializeHid()
             } else {
-                updateStatus("Izin Bluetooth ditolak. Izinkan Bluetooth dari pengaturan aplikasi.")
+                updateStatus("Izin Bluetooth ditolak. Izinkan Bluetooth CONNECT dan ADVERTISE.")
             }
         }
     }
 
     private fun initializeHid() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            updateStatus("Bluetooth HID Device membutuhkan Android 9 atau lebih baru.")
+            updateStatus("Bluetooth HID Device memerlukan Android 9 atau lebih baru.")
             return
         }
-        hidController = BluetoothHidController(this) { message -> runOnUiThread { updateStatus(message) } }
-        updateStatus("Siap. Tekan HUBUNGKAN untuk menyiapkan gamepad Bluetooth.")
+        hidController?.close()
+        hidController = BluetoothHidController(
+            this,
+            onStatus = { message -> runOnUiThread { updateStatus(message) } },
+            onReady = {
+                runOnUiThread {
+                    updateStatus(
+                        "HID AKTIF. Pair HP ini dari HP penerima. Setelah paired, tekan HUBUNGKAN lagi."
+                    )
+                }
+            }
+        )
+        updateStatus("Siap. Tekan HUBUNGKAN untuk memulai pairing.")
     }
 
     private fun connectAndPair() {
         val adapter = BluetoothAdapter.getDefaultAdapter()
         if (adapter == null) {
-            updateStatus("HP ini tidak memiliki Bluetooth.")
+            updateStatus("Bluetooth tidak tersedia di HP ini.")
             return
         }
         if (!adapter.isEnabled) {
             @Suppress("DEPRECATION")
-            startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE), REQUEST_ENABLE_BT)
+            startActivityForResult(
+                Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE),
+                REQUEST_ENABLE_BT
+            )
             return
         }
-        hidController?.start()
-        try {
-            val discoverable = Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
-                putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
-            }
-            startActivity(discoverable)
-        } catch (_: Exception) {
-            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+
+        val controller = hidController
+        if (controller == null) {
+            requestBluetoothPermissions()
+            return
+        }
+
+        if (controller.isRegistered()) {
+            showPairedHosts(controller, adapter)
+        } else {
+            requestDiscoverableBeforeRegistering()
         }
     }
 
-    @Deprecated("Uses the Android system Bluetooth enable prompt")
+    /**
+     * Discoverability prompt is shown BEFORE HID registration. Android may
+     * automatically unregister a HID app while it is not foreground.
+     */
+    private fun requestDiscoverableBeforeRegistering() {
+        try {
+            val intent = Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
+                putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
+            }
+            startActivityForResult(intent, REQUEST_DISCOVERABLE)
+        } catch (error: Exception) {
+            updateStatus("Tidak bisa membuka mode discoverable: ${error.message ?: "kesalahan Bluetooth"}")
+        }
+    }
+
+    private fun showPairedHosts(controller: BluetoothHidController, adapter: BluetoothAdapter) {
+        val devices = controller.pairedDevices().filter { device ->
+            try {
+                device.address != adapter.address
+            } catch (_: SecurityException) {
+                true
+            }
+        }
+
+        if (devices.isEmpty()) {
+            updateStatus(
+                "HID aktif. Belum ada HP yang paired. Dari HP penerima, buka Bluetooth lalu pair dengan nama Bluetooth HP controller ini. Kembali ke sini dan tekan HUBUNGKAN."
+            )
+            return
+        }
+
+        val labels = devices.map { deviceLabel(it) }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Pilih HP penerima")
+            .setItems(labels) { _, index ->
+                controller.connect(devices[index])
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun deviceLabel(device: BluetoothDevice): String {
+        return try {
+            val name = device.name?.takeIf { it.isNotBlank() } ?: "Perangkat Bluetooth"
+            "$name\n${device.address}"
+        } catch (_: SecurityException) {
+            "Perangkat Bluetooth"
+        }
+    }
+
+    @Deprecated("Uses Android system Bluetooth prompts")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_ENABLE_BT && resultCode == Activity.RESULT_OK) {
-            connectAndPair()
-        } else if (requestCode == REQUEST_ENABLE_BT) {
-            updateStatus("Bluetooth belum diaktifkan.")
+        when (requestCode) {
+            REQUEST_ENABLE_BT -> {
+                if (resultCode == Activity.RESULT_OK) {
+                    requestDiscoverableBeforeRegistering()
+                } else {
+                    updateStatus("Bluetooth belum diaktifkan.")
+                }
+            }
+            REQUEST_DISCOVERABLE -> {
+                if (resultCode > 0) {
+                    updateStatus("Mode terlihat aktif. Mendaftarkan HID saat aplikasi kembali aktif…")
+                    hidController?.start()
+                } else {
+                    updateStatus("Permintaan mode discoverable dibatalkan. Tekan HUBUNGKAN untuk mencoba lagi.")
+                }
+            }
         }
     }
 
@@ -107,32 +202,51 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 8, 24, 8)
         }
-        val deadzoneLabel = TextView(this).apply { text = "Deadzone: ${(gamepadView.deadzone * 100).toInt()}%" }
-        val deadzoneBar = SeekBar(this).apply { max = 30; progress = (gamepadView.deadzone * 100).toInt() }
-        val sensitivityLabel = TextView(this).apply { text = "Sensitivitas: ${(gamepadView.sensitivity * 100).toInt()}%" }
-        val sensitivityBar = SeekBar(this).apply { max = 200; progress = (gamepadView.sensitivity * 100).toInt() }
-        val sizeLabel = TextView(this).apply { text = "Ukuran analog: ${(gamepadView.stickScale * 100).toInt()}%" }
-        val sizeBar = SeekBar(this).apply { max = 150; progress = (gamepadView.stickScale * 100).toInt() }
+
+        val deadzoneLabel = TextView(this).apply {
+            text = "Deadzone: ${(gamepadView.deadzone * 100).toInt()}%"
+        }
+        val deadzoneBar = SeekBar(this).apply {
+            max = 30
+            progress = (gamepadView.deadzone * 100).toInt()
+        }
+        val sensitivityLabel = TextView(this).apply {
+            text = "Sensitivitas: ${(gamepadView.sensitivity * 100).toInt()}%"
+        }
+        val sensitivityBar = SeekBar(this).apply {
+            max = 200
+            progress = (gamepadView.sensitivity * 100).toInt()
+        }
+        val sizeLabel = TextView(this).apply {
+            text = "Ukuran analog: ${(gamepadView.stickScale * 100).toInt()}%"
+        }
+        val sizeBar = SeekBar(this).apply {
+            max = 150
+            progress = (gamepadView.stickScale * 100).toInt()
+        }
 
         deadzoneBar.setOnSeekBarChangeListener(simpleListener { value ->
             gamepadView.deadzone = value / 100f
-            deadzoneLabel.text = "Deadzone: ${value}%"
-            gamepadView.invalidate()
+            deadzoneLabel.text = "Deadzone: $value%"
         })
         sensitivityBar.setOnSeekBarChangeListener(simpleListener { value ->
             gamepadView.sensitivity = value / 100f
-            sensitivityLabel.text = "Sensitivitas: ${value}%"
-            gamepadView.invalidate()
+            sensitivityLabel.text = "Sensitivitas: $value%"
         })
         sizeBar.setOnSeekBarChangeListener(simpleListener { value ->
-            gamepadView.stickScale = value.coerceAtLeast(50) / 100f
-            sizeLabel.text = "Ukuran analog: ${value.coerceAtLeast(50)}%"
+            val adjusted = value.coerceAtLeast(50)
+            gamepadView.stickScale = adjusted / 100f
+            sizeLabel.text = "Ukuran analog: $adjusted%"
             gamepadView.invalidate()
         })
 
-        layout.addView(deadzoneLabel); layout.addView(deadzoneBar)
-        layout.addView(sensitivityLabel); layout.addView(sensitivityBar)
-        layout.addView(sizeLabel); layout.addView(sizeBar)
+        layout.addView(deadzoneLabel)
+        layout.addView(deadzoneBar)
+        layout.addView(sensitivityLabel)
+        layout.addView(sensitivityBar)
+        layout.addView(sizeLabel)
+        layout.addView(sizeBar)
+
         AlertDialog.Builder(this)
             .setTitle("Pengaturan Controller")
             .setView(layout)
@@ -140,11 +254,14 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun simpleListener(onValue: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
-        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) = onValue(progress)
-        override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
-        override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
-    }
+    private fun simpleListener(onValue: (Int) -> Unit) =
+        object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                onValue(progress)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+        }
 
     private fun updateStatus(message: String) {
         if (::gamepadView.isInitialized) gamepadView.statusText = message
@@ -158,5 +275,6 @@ class MainActivity : Activity() {
     companion object {
         private const val REQUEST_ENABLE_BT = 501
         private const val REQUEST_BLUETOOTH_PERMISSIONS = 502
+        private const val REQUEST_DISCOVERABLE = 503
     }
 }
