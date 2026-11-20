@@ -54,6 +54,16 @@ class GamepadView(
         "A" to LayoutItem(0.84f, 0.69f)
     )
     private val items = linkedMapOf<String, LayoutItem>()
+    private val defaultButtonMap = linkedMapOf(
+        "A" to 0, "B" to 1, "X" to 2, "Y" to 3,
+        "L1" to 4, "R1" to 5, "L2" to 6, "R2" to 7,
+        "SELECT" to 8, "START" to 9,
+        "LEFT_STICK" to 10, "RIGHT_STICK" to 11,
+        "DPAD_UP" to 12, "DPAD_DOWN" to 13,
+        "DPAD_LEFT" to 14, "DPAD_RIGHT" to 15
+    )
+    private val buttonMap = linkedMapOf<String, Int>()
+    private var mappingProfile = "standard"
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val buttons = BooleanArray(16)
     private val owners = Array(16) { mutableSetOf<Int>() }
@@ -64,13 +74,12 @@ class GamepadView(
     private var rightX = 0f
     private var rightY = 0f
 
-    private var autoInputEnabled = true
     private var editMode = false
     private var selectedControl = "LEFT_STICK"
     private var editPointerId: Int? = null
 
     private val connectRect = RectF()
-    private val autoRect = RectF()
+    private val mapRect = RectF()
     private val editRect = RectF()
     private val settingsRect = RectF()
     private val density = resources.displayMetrics.density
@@ -78,6 +87,50 @@ class GamepadView(
     init {
         isFocusable = true
         loadLayout()
+        loadButtonMapping()
+    }
+
+    private fun loadButtonMapping() {
+        mappingProfile = preferences.getString("mapping_profile", "standard") ?: "standard"
+        buttonMap.clear()
+        defaultButtonMap.forEach { (id, index) ->
+            buttonMap[id] = preferences.getInt("button_$id", index).coerceIn(0, 15)
+        }
+    }
+
+    fun currentMappingProfile(): String = mappingProfile
+
+    fun mappingProfileName(): String = when (mappingProfile) {
+        "nintendo" -> "Nintendo"
+        "swap_ab" -> "Tukar A/B"
+        "swap_xy" -> "Tukar X/Y"
+        else -> "Android / Xbox"
+    }
+
+    fun applyAutoMapping(profile: String) {
+        val mapped = LinkedHashMap(defaultButtonMap)
+        fun swap(first: String, second: String) {
+            val value = mapped[first] ?: return
+            mapped[first] = mapped[second] ?: return
+            mapped[second] = value
+        }
+        when (profile) {
+            "nintendo" -> {
+                swap("A", "B")
+                swap("X", "Y")
+            }
+            "swap_ab" -> swap("A", "B")
+            "swap_xy" -> swap("X", "Y")
+        }
+        mappingProfile = if (profile in setOf("nintendo", "swap_ab", "swap_xy")) profile else "standard"
+        buttonMap.clear()
+        buttonMap.putAll(mapped)
+        val editor = preferences.edit().putString("mapping_profile", mappingProfile)
+        mapped.forEach { (id, index) -> editor.putInt("button_$id", index) }
+        editor.apply()
+        clearAllInput()
+        emitReport()
+        invalidate()
     }
 
     private fun loadLayout() {
@@ -119,24 +172,12 @@ class GamepadView(
         invalidate()
     }
 
-    fun setAutoInput(enabled: Boolean) {
-        if (autoInputEnabled == enabled) return
-        if (!enabled) {
-            clearAllInput()
-            emitReport(force = true)
-        }
-        autoInputEnabled = enabled
-        invalidate()
-    }
-
-    fun isAutoInputEnabled(): Boolean = autoInputEnabled
-
     private fun setEditMode(enabled: Boolean) {
         editMode = enabled
         editPointerId = null
         pointerTargets.clear()
         clearAllInput()
-        emitReport(force = true)
+        emitReport()
         if (!enabled) saveLayout()
         invalidate()
     }
@@ -165,15 +206,11 @@ class GamepadView(
         val right = w - 12f * density
         settingsRect.set(right - 34f * density, 14f * density, right, 46f * density)
         editRect.set(settingsRect.left - 48f * density, 14f * density, settingsRect.left - 6f * density, 46f * density)
-        autoRect.set(editRect.left - 56f * density, 14f * density, editRect.left - 6f * density, 46f * density)
-        connectRect.set(autoRect.left - 88f * density, 14f * density, autoRect.left - 6f * density, 46f * density)
+        mapRect.set(editRect.left - 64f * density, 14f * density, editRect.left - 6f * density, 46f * density)
+        connectRect.set(mapRect.left - 88f * density, 14f * density, mapRect.left - 6f * density, 46f * density)
 
         drawToolbarButton(canvas, connectRect, "PAIR", 0xFF176F62.toInt())
-        drawToolbarButton(
-            canvas, autoRect,
-            if (autoInputEnabled && !editMode) "AUTO ON" else "AUTO OFF",
-            if (autoInputEnabled && !editMode) 0xFF176F62.toInt() else 0xFF6D4A35.toInt()
-        )
+        drawToolbarButton(canvas, mapRect, "AUTO MAP", 0xFF176F62.toInt())
         drawToolbarButton(canvas, editRect, if (editMode) "DONE" else "EDIT",
             if (editMode) 0xFF996B2D.toInt() else 0xFF303B4B.toInt())
         drawToolbarButton(canvas, settingsRect, "SET", 0xFF303B4B.toInt())
@@ -210,11 +247,6 @@ class GamepadView(
                 "EDIT LAYOUT: geser kontrol • pilih kontrol lalu ubah ukurannya di SET",
                 w / 2f, h - 12f * density, paint
             )
-        } else if (!autoInputEnabled) {
-            paint.color = 0xFFFFC078.toInt()
-            paint.textSize = 11f * density
-            paint.textAlign = Paint.Align.CENTER
-            canvas.drawText("AUTO INPUT PAUSED", w / 2f, h - 12f * density, paint)
         }
     }
 
@@ -293,11 +325,11 @@ class GamepadView(
                     setEditMode(!editMode)
                     return true
                 }
-                if (autoRect.contains(x, y)) {
+                if (mapRect.contains(x, y)) {
                     if (editMode) {
                         statusText = "Selesaikan EDIT terlebih dahulu."
                     } else {
-                        setAutoInput(!autoInputEnabled)
+                        onMapping()
                     }
                     return true
                 }
@@ -312,7 +344,6 @@ class GamepadView(
                     return true
                 }
 
-                if (!autoInputEnabled) return true
                 val target = hitTest(x, y) ?: return true
                 pointerTargets[id] = target
                 updateTarget(id, target, x, y)
@@ -403,7 +434,7 @@ class GamepadView(
                 )
                 leftX = vector.first
                 leftY = vector.second
-                setPointerButtons(id, setOf(10))
+                setPointerButtons(id, setOf(buttonMap["LEFT_STICK"] ?: 10))
             }
             TargetKind.STICK_RIGHT -> {
                 val center = items[target.id]!!
@@ -413,7 +444,7 @@ class GamepadView(
                 )
                 rightX = vector.first
                 rightY = vector.second
-                setPointerButtons(id, setOf(11))
+                setPointerButtons(id, setOf(buttonMap["RIGHT_STICK"] ?: 11))
             }
             TargetKind.DPAD -> {
                 val center = items[target.id]!!
@@ -422,20 +453,15 @@ class GamepadView(
                 val angle = atan2(dy, dx)
                 val selected = mutableSetOf<Int>()
                 if (hypot(dx, dy) > minOf(width, height) * 0.035f) {
-                    if (cos(angle) > 0.38f) selected.add(15)
-                    if (cos(angle) < -0.38f) selected.add(14)
-                    if (sin(angle) > 0.38f) selected.add(13)
-                    if (sin(angle) < -0.38f) selected.add(12)
+                    if (cos(angle) > 0.38f) selected.add(buttonMap["DPAD_RIGHT"] ?: 15)
+                    if (cos(angle) < -0.38f) selected.add(buttonMap["DPAD_LEFT"] ?: 14)
+                    if (sin(angle) > 0.38f) selected.add(buttonMap["DPAD_DOWN"] ?: 13)
+                    if (sin(angle) < -0.38f) selected.add(buttonMap["DPAD_UP"] ?: 12)
                 }
                 setPointerButtons(id, selected)
             }
             TargetKind.BUTTON -> {
-                val index = when (target.id) {
-                    "A" -> 0; "B" -> 1; "X" -> 2; "Y" -> 3
-                    "L1" -> 4; "R1" -> 5; "L2" -> 6; "R2" -> 7
-                    "SELECT" -> 8; "START" -> 9
-                    else -> -1
-                }
+                val index = buttonMap[target.id] ?: -1
                 setPointerButtons(id, if (index >= 0) setOf(index) else emptySet())
             }
         }
@@ -485,8 +511,7 @@ class GamepadView(
         rightY = 0f
     }
 
-    private fun emitReport(force: Boolean = false) {
-        if (!autoInputEnabled && !force) return
+    private fun emitReport() {
         val report = ByteArray(6)
         for (index in buttons.indices) {
             if (buttons[index]) {
