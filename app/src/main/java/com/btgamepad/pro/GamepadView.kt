@@ -256,10 +256,10 @@ class GamepadView(
     }
 
     private fun releaseTarget(id: Int) {
-        pointerTargets.remove(id)
+        val releasedTarget = pointerTargets.remove(id)
         pointerButtons.remove(id)?.forEach { owners[it].remove(id) }
-        if (pointerTargets[id]?.kind == TargetKind.STICK_LEFT) { leftX = 0f; leftY = 0f }
-        if (pointerTargets[id]?.kind == TargetKind.STICK_RIGHT) { rightX = 0f; rightY = 0f }
+        if (releasedTarget?.kind == TargetKind.STICK_LEFT) { leftX = 0f; leftY = 0f }
+        if (releasedTarget?.kind == TargetKind.STICK_RIGHT) { rightX = 0f; rightY = 0f }
         // Reset stick axes when their corresponding click button is no longer held.
         if (owners[10].isEmpty()) { leftX = 0f; leftY = 0f }
         if (owners[11].isEmpty()) { rightX = 0f; rightY = 0f }
