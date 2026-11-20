@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.SeekBar
@@ -87,7 +88,7 @@ class MainActivity : Activity() {
             }
             startActivity(discoverable)
         } catch (_: Exception) {
-            startActivity(Intent(BluetoothAdapter.ACTION_BLUETOOTH_SETTINGS))
+            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
         }
     }
 
