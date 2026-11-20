@@ -112,7 +112,7 @@ class BluetoothHidController(
             "BT Gamepad Pro",
             "Android Bluetooth Gamepad",
             "BT Gamepad Pro",
-            0x00.toByte(),
+            BluetoothHidDevice.SUBCLASS2_GAMEPAD,
             REPORT_DESCRIPTOR
         )
         val accepted = service.registerApp(sdp, null, null, executor, callback)
