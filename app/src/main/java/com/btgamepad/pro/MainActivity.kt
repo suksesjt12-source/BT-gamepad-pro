@@ -1,5 +1,6 @@
 package com.btgamepad.pro
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
