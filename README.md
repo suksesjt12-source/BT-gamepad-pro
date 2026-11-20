@@ -1,37 +1,39 @@
 # BT Gamepad Pro
 
-Native Android touchscreen gamepad that attempts to expose the controller phone as a standard Bluetooth HID Game Pad.
+Native Android touchscreen controller that exposes the controller phone as a Bluetooth Classic HID gamepad.
 
-## Features in this starter
+## Features
 
-- Dual 360-degree virtual analog sticks with L3/R3 click
-- D-pad, A/B/X/Y, L1/L2/R1/R2, Start and Select
-- Adjustable analog deadzone, sensitivity and stick size
-- Landscape controller layout
-- Bluetooth HID Device registration and connection status
+- Dual 360-degree virtual analog sticks
+- L3/R3, D-pad, A/B/X/Y, L1/L2/R1/R2, Start and Select
+- Adjustable deadzone, sensitivity and analog stick size
+- Landscape layout
+- Bluetooth HID Device registration and explicit host connection
 - GitHub Actions debug APK build
 
-## Important compatibility note
+## Compatibility
 
-This app uses Android Bluetooth HID Device profile (introduced in Android 9 / API 28). Android manufacturers are not required to include the optional HID Device system profile, so some phones cannot act as a Bluetooth gamepad even when Bluetooth itself works. The app checks for the profile and displays an unsupported message if it is missing.
+The controller phone must include Android's optional Bluetooth HID Device profile (API 28 / Android 9 or newer). Android manufacturers are not required to include this profile, so Bluetooth may work normally while HID Device is unavailable. The app reports this condition rather than pretending to connect.
 
-The receiving phone must support Bluetooth HID host/gamepad input. No companion receiver app is required when the receiving phone recognizes standard Bluetooth gamepads. Pairing and game compatibility depend on the receiving phone and game.
+The receiving phone must support Bluetooth HID Host/gamepad input. The target game must accept a standard physical gamepad.
 
-## Pairing
+## Correct pairing sequence
 
-1. Install and open BT Gamepad Pro on the controller phone.
-2. Tap HUBUNGKAN and allow the Bluetooth permission prompts.
-3. Accept the Android discoverability prompt.
-4. On the receiving phone, open Bluetooth settings and pair with BT Gamepad Pro.
-5. Open a game that supports a physical HID gamepad.
+1. Open BT Gamepad Pro on the **controller phone** and keep the app open on screen.
+2. Tap **HUBUNGKAN**. Android asks permission to make the controller phone discoverable; accept it.
+3. After Android returns to BT Gamepad Pro, wait for the status to say **HID AKTIF**.
+4. On the **receiving phone**, open Bluetooth settings, scan for nearby devices, and pair with the **Bluetooth name of the controller phone** (for example, the phone's own device name). The device may not appear as “BT Gamepad Pro” because Android controls the phone's Bluetooth adapter name.
+5. Return to BT Gamepad Pro on the controller phone and tap **HUBUNGKAN** again.
+6. Choose the receiving phone from the paired-device list. Wait for the status to say **TERHUBUNG**.
+7. Keep BT Gamepad Pro open in the foreground while playing. Android can automatically unregister a HID Device app when it is no longer in the foreground.
 
-If the controller phone reports that HID Device is unavailable, that is a device firmware limitation; this app cannot add a missing system Bluetooth profile without manufacturer/system-level support.
+If the controller phone reports that HID Device is unavailable, this is a firmware limitation. An ordinary app cannot add a missing system Bluetooth HID profile.
 
 ## Build APK
 
-The workflow at .github/workflows/build-apk.yml builds a debug APK on every push to main and on manual dispatch.
+GitHub Actions builds a debug APK on every push to `main` and on manual dispatch.
 
-Open the repository Actions tab, select Build BT Gamepad Pro APK, then download the BT-Gamepad-Pro-debug artifact from a successful run.
+Open **Actions** > **Build BT Gamepad Pro APK** > a successful run > **Artifacts** > `BT-Gamepad-Pro-debug`.
 
 ## Development
 
